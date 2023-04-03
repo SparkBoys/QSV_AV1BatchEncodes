@@ -1,0 +1,63 @@
+# Configuration
+$sourceFolder = "C:\SourceVideos"
+$destinationFolder = "C:\DestinationVideos"
+$logFile = "C:\VideoEncodingLog.txt"
+$handBrakeCliPath = "C:\Path\to\HandBrakeCLI.exe"
+$minFreeSpaceGB = 100
+$emailFrom = "youremail@example.com"
+$emailTo = "youremail@example.com"
+$emailSubject = "Video Encoding Stopped"
+$emailSmtpServer = "smtp.example.com"
+$emailSmtpPort = 587
+$emailUsername = "yourusername"
+$emailPassword = "yourpassword"
+
+# Ensure the log file exists
+if (-not (Test-Path $logFile)) {
+    New-Item -Path $logFile -ItemType File
+}
+
+# Read the log file
+$encodedVideos = Get-Content $logFile
+
+# Get all common video files
+$videoExtensions = "*.mp4", "*.mkv", "*.avi", "*.mov", "*.wmv", "*.flv"
+$videos = Get-ChildItem -Path $sourceFolder -Include $videoExtensions -Recurse
+
+# Sort videos alphabetically
+$sortedVideos = $videos | Sort-Object -Property Name
+
+# Function to send email
+function SendEmail($subject, $body) {
+    $securePassword = ConvertTo-SecureString $emailPassword -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential -ArgumentList $emailUsername, $securePassword
+
+    Send-MailMessage -From $emailFrom -To $emailTo -Subject $subject -Body $body -SmtpServer $emailSmtpServer -Port $emailSmtpPort -UseSsl -Credential $credential
+}
+
+# Encode videos
+foreach ($video in $sortedVideos) {
+    # Check if the video has already been encoded
+    if ($encodedVideos -contains $video.Name) {
+        continue
+    }
+
+    # Check for available disk space
+    $driveLetter = (Split-Path -Qualifier $destinationFolder).Trim(':')
+    $drive = Get-Volume -DriveLetter $driveLetter
+    $freeSpaceGB = [math]::Round($drive.SizeRemaining / 1GB)
+
+    if ($freeSpaceGB -lt $minFreeSpaceGB) {
+        $emailBody = "Video encoding has stopped due to insufficient disk space. Please free up some space and try again."
+        SendEmail $emailSubject $emailBody
+        Write-Host "Insufficient disk space. Available space: $freeSpaceGB GB. Required space: $minFreeSpaceGB GB."
+        break
+    }
+
+    # Encode video
+    $outputFile = Join-Path $destinationFolder ($video.BaseName + "_AV1" + $video.Extension)
+    & $handBrakeCliPath --input $video.FullName --output $outputFile --encoder QSV_AV1 --quality 24 --vfr --encoder-preset quality
+
+    # Log the encoded video
+    Add-Content -Path $logFile -Value $video.Name
+}
